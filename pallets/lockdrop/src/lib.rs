@@ -3,10 +3,12 @@
 // mod benchmarking;
 // mod default_weights;
 
+pub use pallet::*;
+
 use codec::{Decode, Encode};
 use scale_info::TypeInfo;
 use frame_support::{
-	decl_error, decl_event, decl_module, decl_storage, ensure,
+	ensure,
 	storage::child,
 	traits::{Currency, Get, LockIdentifier, LockableCurrency, WithdrawReasons},
 	weights::Weight,
@@ -17,69 +19,69 @@ use frame_system::{ensure_root, ensure_signed};
 use serde::{Deserialize, Serialize};
 use sp_runtime::{traits::Hash, RuntimeDebug};
 use sp_std::{cmp,convert::TryInto, prelude::*};
+pub type BalanceOf<T> = <<T as Config>::Currency as Currency<<T as frame_system::Config>::AccountId>>::Balance;
+pub type AccountId<T> = <T as frame_system::Config>::AccountId;
+
+#[frame_support::pallet]
+pub mod pallet {
+	use codec::EncodeLike;
+	use super::*;
+	use frame_support::pallet_prelude::*;
+	use frame_system::pallet_prelude::*;
 
 
-pub trait WeightInfo {
-	fn create_campaign() -> Weight;
-	fn conclude_campaign() -> Weight;
-	fn remove_expired_child_storage() -> Weight;
-	fn lock() -> Weight;
-	fn unlock() -> Weight;
-}
-
-pub type CampaignIdentifier = [u8; 4];
-
-#[derive(Encode, Decode, TypeInfo, Clone, Eq, PartialEq, RuntimeDebug)]
-#[cfg_attr(feature = "std", derive(Serialize, Deserialize))]
-pub struct CampaignInfo<BlockNumber> {
-	end_block: BlockNumber,
-	min_lock_end_block: BlockNumber,
-	child_root: Option<Vec<u8>>,
-}
-
-#[derive(Encode, Decode, TypeInfo, Clone, Eq, PartialEq, RuntimeDebug)]
-#[cfg_attr(feature = "std", derive(Serialize, Deserialize))]
-pub struct LockInfo<BlockNumber, Balance> {
-	balance: Balance,
-	end_block: BlockNumber,
-}
-
-#[derive(Encode, Decode, TypeInfo, Clone, Eq, PartialEq, RuntimeDebug)]
-#[cfg_attr(feature = "std", derive(Serialize, Deserialize))]
-pub struct ChildLockData<BlockNumber, Balance> {
-	balance: Balance,
-	end_block: BlockNumber,
-	payload: Option<Vec<u8>>,
-}
-
-pub trait Config: frame_system::Config {
-	/// The overarching event type.
-	type RuntimeEvent: From<Event<Self>> + IsType<<Self as frame_system::Config>::RuntimeEvent>;
-	/// An implementation of on-chain currency.
-	type Currency: LockableCurrency<Self::AccountId>;
-
-	/// Payload length limit.
-	type PayloadLenLimit: Get<u32>;
-	/// Max number of storage keys to remove per extrinsic call.
-	type RemoveKeysLimit: Get<u32>;
-
-	/// Weights for this pallet.
-	type WeightInfo: WeightInfo;
-}
-
-/// Type alias for currency balance.
-pub type BalanceOf<T> =
-<<T as Config>::Currency as Currency<<T as frame_system::Config>::AccountId>>::Balance;
-
-decl_storage! {
-	trait Store for Module<T: Config> as Eras {
-		Campaigns get(fn campaigns): map hasher(blake2_128_concat) CampaignIdentifier => Option<CampaignInfo<T::BlockNumber>>;
-		Locks get(fn locks): double_map hasher(blake2_128_concat) CampaignIdentifier, hasher(blake2_128_concat) T::AccountId => Option<LockInfo<T::BlockNumber, BalanceOf<T>>>;
+	pub trait WeightInfo {
+		fn create_campaign() -> Weight;
+		fn conclude_campaign() -> Weight;
+		fn remove_expired_child_storage() -> Weight;
+		fn lock() -> Weight;
+		fn unlock() -> Weight;
 	}
-}
 
-decl_error! {
-	pub enum Error for Module<T: Config> {
+	pub type CampaignIdentifier = [u8; 4];
+
+	#[derive(Encode, Decode, TypeInfo, Clone, Eq, PartialEq, RuntimeDebug)]
+	#[cfg_attr(feature = "std", derive(Serialize, Deserialize))]
+	pub struct CampaignInfo<BlockNumber> {
+		end_block: BlockNumber,
+		min_lock_end_block: BlockNumber,
+		child_root: Option<Vec<u8>>,
+	}
+
+
+	#[derive(Encode, Decode, TypeInfo, Clone, Eq, PartialEq, RuntimeDebug)]
+	#[cfg_attr(feature = "std", derive(Serialize, Deserialize))]
+	pub struct LockInfo<BlockNumber, Balance> {
+		balance: Balance,
+		end_block: BlockNumber,
+	}
+
+	#[derive(Encode, Decode, TypeInfo, Clone, Eq, PartialEq, RuntimeDebug)]
+	#[cfg_attr(feature = "std", derive(Serialize, Deserialize))]
+	pub struct ChildLockData<BlockNumber, Balance> {
+		balance: Balance,
+		end_block: BlockNumber,
+		payload: Option<Vec<u8>>,
+	}
+
+	#[pallet::config]
+	pub trait Config: frame_system::Config {
+		/// The overarching event type.
+		type RuntimeEvent: From<Event<Self>> + IsType<<Self as frame_system::Config>::RuntimeEvent>;
+		/// An implementation of on-chain currency.
+		type Currency: LockableCurrency<Self::AccountId>;
+
+		/// Payload length limit.
+		type PayloadLenLimit: Get<u32>;
+		/// Max number of storage keys to remove per extrinsic call.
+		type RemoveKeysLimit: Get<u32>;
+
+		/// Weights for this pallet.
+		type WeightInfo: WeightInfo;
+	}
+
+	#[pallet::error]
+	pub enum Error<T> {
 		/// The given campaign name was used in the past.
 		CampaignIdentifierUsedInPast,
 		/// The given campaign trying to create has already existed.
@@ -101,27 +103,36 @@ decl_error! {
 		/// Invalid lock end block.
 		InvalidLockEndBlock,
 	}
-}
 
-decl_event! {
-	pub enum Event<T> where AccountId = <T as frame_system::Config>::AccountId {
+	#[pallet::event]
+	#[pallet::generate_deposit(pub (super) fn deposit_event)]
+	pub enum Event<T: Config>  {
 		CampaignCreated(CampaignIdentifier),
 		CampaignConcluded(CampaignIdentifier, Vec<u8>),
 		ChildStorageRemoved(CampaignIdentifier),
 		ChildStoragePartiallyRemoved(CampaignIdentifier),
-		Locked(CampaignIdentifier, AccountId),
-		Unlocked(CampaignIdentifier, AccountId),
+		Locked(CampaignIdentifier, AccountId<T>),
+		Unlocked(CampaignIdentifier, AccountId<T>),
 	}
-}
 
-decl_module! {
-	pub struct Module<T: Config> for enum Call where origin: T::Origin {
-		type Error = Error<T>;
+	#[pallet::storage]
+	#[pallet::getter(fn campaigns)]
+	pub(super) type Campaigns<T: Config> = StorageMap<_, Blake2_128Concat, CampaignIdentifier, Option<CampaignInfo<T::BlockNumber>>, ValueQuery>;
 
-		fn deposit_event() = default;
+	#[pallet::storage]
+	#[pallet::getter(fn locks)]
+	pub(super) type Locks<T: Config> = StorageDoubleMap<_, Blake2_128Concat, CampaignIdentifier, Blake2_128Concat, T::AccountId, Option<LockInfo<T::BlockNumber, BalanceOf<T>>>, ValueQuery>;
 
-		#[weight = T::WeightInfo::create_campaign()]
-		fn create_campaign(origin, identifier: CampaignIdentifier, end_block: T::BlockNumber, min_lock_end_block: T::BlockNumber) {
+	#[pallet::pallet]
+	#[pallet::generate_store(pub (super) trait Store)]
+	#[pallet::without_storage_info]
+	pub struct Pallet<T>(PhantomData<T>);
+
+	#[pallet::call]
+	impl<T: Config> Pallet<T> {
+		#[pallet::weight(T::WeightInfo::create_campaign())]
+		pub fn create_campaign(origin: OriginFor<T>, identifier: CampaignIdentifier, end_block: T::BlockNumber, min_lock_end_block: T::BlockNumber) -> DispatchResultWithPostInfo {
+
 			ensure_root(origin)?;
 
 			let campaign_name_used_in_past = Locks::<T>::iter_prefix_values(identifier).next().is_some();
@@ -135,10 +146,12 @@ decl_module! {
 
 			Campaigns::<T>::insert(identifier, CampaignInfo { end_block, min_lock_end_block, child_root: None });
 			Self::deposit_event(Event::<T>::CampaignCreated(identifier));
+
+			Ok(().into())
 		}
 
-		#[weight = T::WeightInfo::conclude_campaign()]
-		fn conclude_campaign(origin, identifier: CampaignIdentifier) {
+		#[pallet::weight(<T as Config>::WeightInfo::conclude_campaign())]
+		pub fn conclude_campaign(origin: OriginFor<T>, identifier: CampaignIdentifier) -> DispatchResultWithPostInfo {
 			ensure_signed(origin)?;
 
 			Campaigns::<T>::mutate(&identifier, |info| {
@@ -153,10 +166,12 @@ decl_module! {
 					}
 				}
 			});
+
+			Ok(().into())
 		}
 
-		#[weight = T::WeightInfo::remove_expired_child_storage()]
-		fn remove_expired_child_storage(origin, identifier: CampaignIdentifier) {
+		#[pallet::weight(T::WeightInfo::remove_expired_child_storage())]
+		pub fn remove_expired_child_storage(origin: OriginFor<T>, identifier: CampaignIdentifier) -> DispatchResultWithPostInfo {
 			ensure_signed(origin)?;
 
 			let info = Campaigns::<T>::get(&identifier);
@@ -173,10 +188,11 @@ decl_module! {
 					}
 				}
 			}
+			Ok(().into())
 		}
 
-		#[weight = T::WeightInfo::lock()]
-		fn lock(origin, amount: BalanceOf<T>, identifier: CampaignIdentifier, lock_end_block: T::BlockNumber, payload: Option<Vec<u8>>) {
+		#[pallet::weight(T::WeightInfo::lock())]
+		pub fn lock(origin: OriginFor<T>, identifier: CampaignIdentifier, amount: BalanceOf<T>, lock_end_block: T::BlockNumber, payload: Option<Vec<u8>>) -> DispatchResultWithPostInfo {
 			let account_id = ensure_signed(origin)?;
 
 			ensure!(T::Currency::free_balance(&account_id) >= amount, Error::<T>::NotEnoughBalance);
@@ -210,10 +226,11 @@ decl_module! {
 
 			Locks::<T>::insert(identifier, account_id.clone(), lock_info);
 			Self::deposit_event(Event::<T>::Locked(identifier, account_id));
+			Ok(().into())
 		}
 
-		#[weight = T::WeightInfo::unlock()]
-		fn unlock(origin, identifier: CampaignIdentifier) {
+		#[pallet::weight(T::WeightInfo::unlock())]
+		pub fn unlock(origin: OriginFor<T>, identifier: CampaignIdentifier, amount: BalanceOf<T>) -> DispatchResultWithPostInfo {
 			let account_id = ensure_signed(origin)?;
 
 			let info = Locks::<T>::get(&identifier, &account_id);
@@ -228,57 +245,59 @@ decl_module! {
 					Self::deposit_event(Event::<T>::Unlocked(identifier, account_id));
 				}
 			}
+			Ok(().into())
 		}
 	}
-}
 
-impl<T: Config> Module<T> {
-	pub fn lock_identifier(identifier: CampaignIdentifier) -> LockIdentifier {
-		[
-			b'd',
-			b'r',
-			b'o',
-			b'p',
-			identifier[0],
-			identifier[1],
-			identifier[2],
-			identifier[3],
-		]
-	}
 
-	pub fn child_info(identifier: &CampaignIdentifier) -> child::ChildInfo {
-		let mut buf = Vec::new();
-		buf.extend_from_slice(b"lockdrop:");
-		buf.extend_from_slice(identifier);
-		child::ChildInfo::new_default(T::Hashing::hash(&buf[..]).as_ref())
-	}
+	impl<T: Config> Pallet<T> {
+		pub fn lock_identifier(identifier: CampaignIdentifier) -> LockIdentifier {
+			[
+				b'd',
+				b'r',
+				b'o',
+				b'p',
+				identifier[0],
+				identifier[1],
+				identifier[2],
+				identifier[3],
+			]
+		}
 
-	fn child_data_put(
-		identifier: &CampaignIdentifier,
-		account_id: &T::AccountId,
-		data: &ChildLockData<T::BlockNumber, BalanceOf<T>>,
-	) {
-		account_id.using_encoded(|account_id| {
-			child::put(&Self::child_info(identifier), &account_id, &data)
-		})
-	}
+		pub fn child_info(identifier: &CampaignIdentifier) -> child::ChildInfo {
+			let mut buf = Vec::new();
+			buf.extend_from_slice(b"lockdrop:");
+			buf.extend_from_slice(identifier);
+			child::ChildInfo::new_default(T::Hashing::hash(&buf[..]).as_ref())
+		}
 
-	pub fn child_data_get(
-		identifier: &CampaignIdentifier,
-		account_id: &T::AccountId,
-	) -> Option<ChildLockData<T::BlockNumber, BalanceOf<T>>> {
-		account_id
-			.using_encoded(|account_id| child::get(&Self::child_info(identifier), &account_id))
-	}
+		fn child_data_put(
+			identifier: &CampaignIdentifier,
+			account_id: &T::AccountId,
+			data: &ChildLockData<T::BlockNumber, BalanceOf<T>>,
+		) {
+			account_id.using_encoded(|account_id| {
+				child::put(&Self::child_info(identifier), &account_id, &data)
+			})
+		}
 
-	pub fn child_root(identifier: &CampaignIdentifier) -> Vec<u8> {
-		child::root(&Self::child_info(identifier))
-	}
+		pub fn child_data_get(
+			identifier: &CampaignIdentifier,
+			account_id: &T::AccountId,
+		) -> Option<ChildLockData<T::BlockNumber, BalanceOf<T>>> {
+			account_id
+				.using_encoded(|account_id| child::get(&Self::child_info(identifier), &account_id))
+		}
 
-	fn child_kill(identifier: &CampaignIdentifier) -> child::KillStorageResult {
-		child::kill_storage(
-			&Self::child_info(identifier),
-			Some(T::RemoveKeysLimit::get()),
-		)
+		pub fn child_root(identifier: &CampaignIdentifier) -> Vec<u8> {
+			child::root(&Self::child_info(identifier), Default::default())
+		}
+
+		fn child_kill(identifier: &CampaignIdentifier) -> child::KillStorageResult {
+			child::kill_storage(
+				&Self::child_info(identifier),
+				Some(T::RemoveKeysLimit::get()),
+			)
+		}
 	}
 }
