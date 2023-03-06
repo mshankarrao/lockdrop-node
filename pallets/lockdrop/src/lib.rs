@@ -24,7 +24,7 @@ pub type AccountId<T> = <T as frame_system::Config>::AccountId;
 
 #[frame_support::pallet]
 pub mod pallet {
-	use codec::EncodeLike;
+	use codec::{EncodeLike};
 	use super::*;
 	use frame_support::pallet_prelude::*;
 	use frame_system::pallet_prelude::*;
@@ -48,6 +48,9 @@ pub mod pallet {
 		child_root: Option<Vec<u8>>,
 	}
 
+	   impl<T: Parameter + Encode + Decode> EncodeLike<Option<CampaignInfo<T>>> for CampaignInfo<T>
+	   {
+	   }
 
 	#[derive(Encode, Decode, TypeInfo, Clone, Eq, PartialEq, RuntimeDebug)]
 	#[cfg_attr(feature = "std", derive(Serialize, Deserialize))]
